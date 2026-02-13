@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>宇宙風パイプ（弾幕密度調整・ゲームオーバーBGM停止対応）</title>
+<title>宇宙風パイプ（敵出現で即撃ち開始）</title>
 <style>
   html,body { height:100%; margin:0; background:#021022; -webkit-tap-highlight-color: transparent; }
   canvas#game {
@@ -74,7 +74,6 @@
   let htmlJumpAudio = null, htmlBgmAudio = null, htmlHitAudio = null, htmlExplodeAudio = null, htmlGameoverAudio = null;
   let audioInitialized = false;
   let audioCtx = null, jumpBuffer = null, hitBuffer = null, explodeBuffer = null, gameoverBuffer = null;
-  // If AudioContext is used to play gameover buffer, keep reference to stop it later
   let gameoverSource = null;
 
   async function initAudioIfNeeded() {
@@ -141,10 +140,8 @@
     } catch(e){}
   }
 
-  // Play gameover BGM and keep reference so it can be stopped when restarting
   function playGameoverBgm() {
     try {
-      // stop any previous gameoverSource first
       stopGameoverBgm();
       if (audioCtx && gameoverBuffer) {
         const src = audioCtx.createBufferSource();
@@ -155,7 +152,6 @@
         g.connect(audioCtx.destination);
         src.start(0);
         gameoverSource = src;
-        // clear reference when ended
         src.onended = () => { if (gameoverSource === src) gameoverSource = null; };
         return;
       }
@@ -163,7 +159,6 @@
     } catch (e) {}
   }
 
-  // Stop any playing gameover BGM (AudioContext source or HTMLAudio)
   function stopGameoverBgm() {
     try {
       if (gameoverSource) {
@@ -179,7 +174,6 @@
     } catch(e){}
   }
 
-  // BGM control
   function playBgm() {
     try {
       if (!htmlBgmAudio) return;
@@ -203,7 +197,7 @@
 
   // --- game constants & state ---
   const INITIAL_GAP = 300;
-  const MIN_GAP = 140; // 最小間隔を広めに
+  const MIN_GAP = 140;
   const SCORE_RAMP_MAX = 100;
   const RAMP_DURATION_MS = 30000;
   const INITIAL_INTERVAL_MAX = 2600;
@@ -216,7 +210,6 @@
   const SPARK_CHANCE = 0.006;
   const COLOR_HUES = [200,160,280,40,10,120,260,340,30,195];
 
-  // Speeds are in pixels per second (time-based movement)
   const PIPE_SPEED_BASE_PPS = 120;
   const PIPE_SPEED_MAX_PPS = 220;
   const PLAYER_BULLET_SPEED_PPS = 520;
@@ -224,9 +217,8 @@
   const ENEMY_MAX_EXTRA_PER_SCORE = 1.6;
   const ENEMY_HP_CAP = 10;
 
-  // Fire interval baseline increased to make patterns more spaced
-  const ENEMY_FIRE_BASE_MIN = 900; // ms (was ~600)
-  const ENEMY_FIRE_RANDOM = 400;   // ms random addition
+  const ENEMY_FIRE_BASE_MIN = 900;
+  const ENEMY_FIRE_RANDOM = 400;
 
   let ship = { x: 80, y: 150, vy: 0, r: 22, angle: 0, thrusting: false };
   let pipes = [];
@@ -239,17 +231,14 @@
   let startTime = null;
   let ignoreInputUntil = 0;
 
-  // --- enemy state ---
   let enemyActive = false;
   let enemy = null;
   let lastEnemySpawnScore = -9999;
   const ENEMY_SPAWN_SCORE_GAP = 10;
 
-  // --- bullets ---
   const playerBullets = [];
   const enemyBullets = [];
 
-  // --- background / particles ---
   const starLayers = [
     {count:80, speed:0.02, sizeRange:[0.6,1.6], color:'#e8f8ff', offset:Math.random()*1000},
     {count:40, speed:0.06, sizeRange:[1.2,2.6], color:'#cfefff', offset:Math.random()*1000},
@@ -274,7 +263,6 @@
   function createNoiseCanvas(w,h,alpha){ const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d'); const img=g.createImageData(w,h); for (let i=0;i<img.data.length;i+=4){ const v=200+Math.floor(Math.random()*55); img.data[i]=v; img.data[i+1]=v; img.data[i+2]=v; img.data[i+3]=Math.floor(255*alpha*Math.random()); } g.putImageData(img,0,0); return c; }
   const noise = createNoiseCanvas(128,128,0.04);
 
-  // --- helpers ---
   function difficultyFactor(){ if(!startTime) return 0; const now=performance.now(); const elapsed=Math.max(0, now-startTime); const t=Math.min(1, elapsed/RAMP_DURATION_MS); return t*t; }
   function currentIntervalMax(){ if(!startTime) return INITIAL_INTERVAL_MAX; const now=performance.now(); const elapsed=Math.max(0, now-startTime); const t=Math.min(1, elapsed/INTERVAL_RAMP_MS); const f=t*t; return Math.round(INITIAL_INTERVAL_MAX + (MIN_INTERVAL - INITIAL_INTERVAL_MAX)*f); }
   function currentPipeSpeedPPS(){ const f=difficultyFactor(); return PIPE_SPEED_BASE_PPS + (PIPE_SPEED_MAX_PPS - PIPE_SPEED_BASE_PPS) * f; }
@@ -282,7 +270,6 @@
   function circleRectIntersect(cx, cy, r, rx, ry, rw, rh){ const nearestX = Math.max(rx, Math.min(cx, rx + rw)); const nearestY = Math.max(ry, Math.min(cy, ry + rh)); const dx = cx - nearestX; const dy = cy - nearestY; return (dx*dx + dy*dy) < (r*r); }
   function hslToRgb(h,s,l){ s/=100; l/=100; const k = n => (n + h/30) % 12; const a = s * Math.min(l,1-l); const f = n => l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n),1))); return [Math.round(255*f(0)), Math.round(255*f(8)), Math.round(255*f(4))]; }
 
-  // --- セピア遷移ユーティリティ ---
   let sepiaAnim = null;
   function applySepiaTransition(duration_ms = 800) {
     const el = canvas;
@@ -319,7 +306,6 @@
     requestAnimationFrame(step);
   }
 
-  // --- input handlers ---
   function onPointerDown(e){
     if (e.cancelable) e.preventDefault();
     initAudioIfNeeded().then(()=>{ if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{}); }).catch(()=>{});
@@ -333,7 +319,6 @@
 
     playJumpSound();
 
-    // 敵が出ているときだけ弾を発射する仕様
     const enemyPresent = (typeof enemy !== 'undefined' && enemy !== null) || enemyActive;
     if (enemyPresent) {
       const bx = ship.x + ship.r * 0.9;
@@ -348,7 +333,6 @@
   document.body.addEventListener('pointerdown', onPointerDown, {passive:false});
   document.body.addEventListener('pointerup', onPointerUp, {passive:false});
 
-  // --- spawn pipe ---
   function spawnPipe(){
     const ch = canvas.clientHeight;
     const gap = gapAtSpawn();
@@ -375,7 +359,7 @@
     lastPipeTime = performance.now();
   }
 
-  // --- spawn enemy ---
+  // --- spawn enemy: 出現時に即撃ち開始するように変更 ---
   function spawnEnemyUFO() {
     enemyActive = true;
     const hp = Math.min(ENEMY_HP_CAP, Math.max(1, Math.floor(score / 5) + 1));
@@ -384,24 +368,21 @@
     enemy = {
       x: canvas.clientWidth + 80,
       y: startY,
-      vx: -80,            // entry speed px/s (left)
+      vx: -80,
       vy: 0,
       r: 34,
       hp: hp,
       fireTimer: 0,
-      // increased base interval so patterns are more spaced initially
       fireInterval: ENEMY_FIRE_BASE_MIN + Math.floor(Math.random()*ENEMY_FIRE_RANDOM),
       patternPhase: Math.floor(Math.random()*3),
       entryDone: false,
       hue: Math.floor(Math.random()*360),
-
-      // movement params
       patrolLeft: Math.floor(canvas.clientWidth * 0.18),
       patrolRight: Math.floor(canvas.clientWidth * 0.82),
       targetX: null,
       wobblePhase: Math.random()*Math.PI*2,
       wobbleAmp: 14 + Math.random()*12,
-      wobbleSpeed: 0.8 + Math.random()*0.8, // radians per second
+      wobbleSpeed: 0.8 + Math.random()*0.8,
       lastManeuver: performance.now(),
       maneuverInterval: 800 + Math.random()*1200,
       dodgeCooldown: 0
@@ -409,17 +390,26 @@
     enemy.targetX = Math.floor(canvas.clientWidth * (0.6 + Math.random()*0.15));
     lastEnemySpawnScore = score;
     lastPipeTime = performance.now();
+
+    // ここで「出現したらすぐ撃つ」動作を行う
+    // patternPhase に基づいて即座に弾を発射し、fireTimer をリセットして次の発射間隔を通常どおりにする
+    try {
+      fireEnemyPattern(enemy.patternPhase);
+    } catch (e) {
+      // 発射に失敗してもゲームは継続
+    }
+    enemy.fireTimer = 0;
+    // 次の発射間隔はランダムに再設定（間隔が短すぎないように）
+    enemy.fireInterval = ENEMY_FIRE_BASE_MIN + Math.floor(Math.random()*ENEMY_FIRE_RANDOM);
   }
 
-  // --- enemy behavior & firing (dt 秒単位で計算) ---
   function updateEnemy(dtMs) {
     if (!enemy) return;
-    const dt = dtMs / 1000; // seconds
+    const dt = dtMs / 1000;
     const now = performance.now();
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
 
-    // Entry: 画面内に入る動き
     if (!enemy.entryDone) {
       enemy.x += enemy.vx * dt;
       const targetEntryX = Math.floor(w * 0.68);
@@ -433,38 +423,32 @@
         enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
         enemy.lastManeuver = now;
       }
-      return;
+      // entry 中でも弾のタイマーは進める（spawn 時に即撃ちしているため、ここでは通常の発射は entryDone 後に行う）
+      // ただし entry 中に連続で撃ちすぎないように fireTimer の扱いはそのままにする
     }
 
-    // difficulty-based speed multiplier (gradual by score)
-    const scoreFactor = Math.min(1.5, score * 0.02); // up to +150%
+    const scoreFactor = Math.min(1.5, score * 0.02);
     const speedMultiplier = 1 + scoreFactor;
 
-    // wobble (vertical sinus)
     enemy.wobblePhase += enemy.wobbleSpeed * dt;
     const wobbleOffset = Math.sin(enemy.wobblePhase) * enemy.wobbleAmp;
 
-    // horizontal target movement: accelerate toward targetX
     if (enemy.targetX === null) enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
     const dx = enemy.targetX - enemy.x;
-    const desiredVx = Math.sign(dx) * (40 + 40 * speedMultiplier); // desired speed px/s
-    const accel = 120; // px/s^2
+    const desiredVx = Math.sign(dx) * (40 + 40 * speedMultiplier);
+    const accel = 120;
     if (enemy.vx < desiredVx) enemy.vx = Math.min(desiredVx, enemy.vx + accel * dt);
     else enemy.vx = Math.max(desiredVx, enemy.vx - accel * dt);
 
-    // clamp vx by a cap that grows slowly with score
     const maxVx = ENEMY_BASE_MAX_VX_PPS * (1 + Math.min(ENEMY_MAX_EXTRA_PER_SCORE, score * 0.02));
     enemy.vx = Math.max(-maxVx, Math.min(maxVx, enemy.vx));
 
-    // apply horizontal movement
     enemy.x += enemy.vx * dt;
 
-    // if close to target, pick a new one occasionally
     if (Math.abs(dx) < 10 || Math.random() < 0.002) {
       enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
     }
 
-    // random maneuvers (less frequent, smaller magnitude)
     if (now - enemy.lastManeuver > enemy.maneuverInterval) {
       enemy.lastManeuver = now;
       enemy.maneuverInterval = 600 + Math.random()*1400;
@@ -473,7 +457,6 @@
       enemy.vy += (Math.random()*2 - 1) * 40;
     }
 
-    // dodge player bullets if close (reduced sensitivity)
     if (enemy.dodgeCooldown <= 0) {
       let nearest = null;
       let nearestDist = 99999;
@@ -486,73 +469,61 @@
       if (nearest && nearestDist < 140) {
         const dir = (nearest.y > enemy.y + wobbleOffset) ? -1 : 1;
         enemy.vy += dir * (40 + Math.random()*40);
-        enemy.dodgeCooldown = 0.35 + Math.random()*0.6; // seconds
+        enemy.dodgeCooldown = 0.35 + Math.random()*0.6;
       }
     } else {
       enemy.dodgeCooldown -= dt;
     }
 
-    // vertical velocity damping and apply
     enemy.vy *= 0.94;
     enemy.y += enemy.vy * dt;
 
-    // keep enemy within vertical bounds
     const minY = 40;
     const maxY = h - 40;
     if (enemy.y < minY) { enemy.y = minY; enemy.vy = Math.abs(enemy.vy)*0.4; }
     if (enemy.y > maxY) { enemy.y = maxY; enemy.vy = -Math.abs(enemy.vy)*0.4; }
 
-    // firing timer (fireInterval adjusted slightly by score but kept reasonably spaced)
     enemy.fireTimer += dtMs;
-    // make adjusted interval decrease more gently with score so spacing remains comfortable
-    const adjustedFireInterval = Math.max(500, enemy.fireInterval - Math.floor(score * 4)); // ms
+    const adjustedFireInterval = Math.max(500, enemy.fireInterval - Math.floor(score * 4));
     if (enemy.fireTimer >= adjustedFireInterval) {
       enemy.fireTimer = 0;
       enemy.patternPhase = (enemy.patternPhase + 1) % 3;
       fireEnemyPattern(enemy.patternPhase);
-      // after firing, set a slightly larger next base to keep spacing
       enemy.fireInterval = ENEMY_FIRE_BASE_MIN + Math.floor(Math.random()*ENEMY_FIRE_RANDOM);
     }
   }
 
-  // --- 敵弾幕密度をスコアに応じて増やす（控えめに） ---
   function computeBulletCount(base) {
-    // base: minimal bullets for pattern
-    // scale with score: gentler increase than before, cap to avoid overload
-    const extra = Math.floor(score * 0.08); // reduced from 0.12 -> 0.08
-    const n = Math.min(22, base + extra); // cap slightly lower
+    const extra = Math.floor(score * 0.08);
+    const n = Math.min(22, base + extra);
     return Math.max(1, n);
   }
 
-  // --- enemy firing patterns (密度調整済み・間隔を広げるため速度も調整) ---
   function fireEnemyPattern(phase) {
     if (!enemy) return;
     const ex = enemy.x - enemy.r*0.6;
     const ey = enemy.y + Math.sin(enemy.wobblePhase) * enemy.wobbleAmp;
 
     if (phase === 0) {
-      // radial pattern (start thinner)
-      const base = 5; // reduced base
+      const base = 5;
       const n = computeBulletCount(base);
       for (let i=0;i<n;i++){
         const a = (i / n) * Math.PI * 2;
-        const s = 110 + Math.random()*30 + Math.min(80, score * 0.8); // slightly lower speeds
+        const s = 110 + Math.random()*30 + Math.min(80, score * 0.8);
         enemyBullets.push({ x: ex, y: ey, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 4, ttl: 6000 });
       }
     } else if (phase === 1) {
-      // aimed spread (start thin)
       const base = 3;
       const n = computeBulletCount(base);
       const dx = ship.x - ex, dy = ship.y - ey;
       const baseAng = Math.atan2(dy, dx);
-      const spread = 0.5 + Math.min(1.0, score * 0.008); // slightly narrower spread
+      const spread = 0.5 + Math.min(1.0, score * 0.008);
       for (let i=0;i<n;i++){
         const a = baseAng + (i - (n-1)/2) * (spread / Math.max(1, (n-1)));
         const s = 140 + Math.random()*40 + Math.min(80, score * 0.8);
         enemyBullets.push({ x: ex, y: ey, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 4, ttl: 6000 });
       }
     } else {
-      // homing-ish salvo (start thin)
       const base = 2;
       const n = computeBulletCount(base);
       for (let i=0;i<n;i++){
@@ -564,7 +535,6 @@
     playHitSound();
   }
 
-  // --- bullets update (dt-sec based) ---
   function updateBullets(dtMs) {
     const dt = dtMs / 1000;
     for (let i = playerBullets.length - 1; i >= 0; i--) {
@@ -590,7 +560,6 @@
     }
   }
 
-  // --- collisions ---
   function checkCollisions() {
     if (enemy) {
       for (let i = playerBullets.length - 1; i >= 0; i--) {
@@ -625,7 +594,6 @@
       }
     }
 
-    // パイプ判定は常に有効
     for (let p of pipes) {
       const topRect = { x: p.x, y: 0, w: PIPE_WIDTH, h: p.top };
       const bottomRect = { x: p.x, y: p.top + p.gap, w: PIPE_WIDTH, h: canvas.clientHeight - (p.top + p.gap) };
@@ -637,7 +605,6 @@
     }
   }
 
-  // --- drawing ---
   function drawBackground() {
     const w = canvas.clientWidth, h = canvas.clientHeight;
     const g = ctx.createLinearGradient(0,0,0,h);
@@ -935,7 +902,6 @@
     drawShipOriginal(ship.x, ship.y, ship.r, ship.angle, ship.thrusting);
   }
 
-  // --- main update & loop ---
   function update(dtMs) {
     if (!running) return;
     const dt = dtMs / 1000;
@@ -947,7 +913,6 @@
 
     if (enemyActive) updateEnemy(dtMs);
 
-    // パイプは常に動かす（dt 秒単位）
     const pipeSpeed = currentPipeSpeedPPS();
     for (let p of pipes) {
       p.x -= pipeSpeed * dt;
@@ -961,7 +926,6 @@
 
     if (performance.now() - lastPipeTime > nextPipeDelay) spawnPipe();
 
-    // 敵出現判定（無限湧き防止）
     if (!enemyActive && !enemy && score >= 5 && score >= lastEnemySpawnScore + ENEMY_SPAWN_SCORE_GAP) {
       spawnEnemyUFO();
     }
@@ -1010,7 +974,6 @@
   }
 
   function reset() {
-    // stop any gameover BGM when resetting
     stopGameoverBgm();
 
     ship = { x: 80, y: canvas.clientHeight/2 - 10, vy: 0, r: 22, angle: 0, thrusting: false };
@@ -1050,7 +1013,6 @@
   }
 
   function start() {
-    // stop any gameover BGM when starting/restarting the game
     stopGameoverBgm();
 
     running = true;
@@ -1078,7 +1040,6 @@
     }
   });
 
-  // init
   reset();
   requestAnimationFrame(loop);
   document.addEventListener('visibilitychange', () => { if (document.hidden) pauseBgm(); else if (running) playBgm(); });
