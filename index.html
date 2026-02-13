@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>宇宙風パイプ（敵出現制御修正版）</title>
+<title>宇宙風パイプ（敵出現制御・セピア演出付き・パイプは消さない）</title>
 <style>
   html,body { height:100%; margin:0; background:#021022; -webkit-tap-highlight-color: transparent; }
   canvas#game {
@@ -17,6 +17,7 @@
     -webkit-user-select: none;
     user-select: none;
     background: linear-gradient(#071428,#0b2a44);
+    transition: filter 0.12s linear;
   }
   .overlay { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; pointer-events: none; font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; }
   #score { position:absolute; left:12px; top:12px; z-index:30; font-size:20px; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.6); pointer-events:auto; background: rgba(255,255,255,0.06); padding:6px 10px; border-radius:8px; }
@@ -52,12 +53,12 @@
 
 <script>
 (() => {
-  // --- 音声ファイルパス（必要に応じて調整） ---
+  // --- 設定: 音声ファイルのパスをプロジェクトに合わせて変更してください ---
   const JUMP_SOUND_SRC = 'assets/jump.wav';
   const BGM_SRC = 'assets/bgm.mp3';
   const HIT_SOUND_SRC = 'assets/hit.wav';
   const EXPLODE_SOUND_SRC = 'assets/explode.wav';
-  const GAMEOVER_BGM_SRC = 'assets/gameover.wav';
+  const GAMEOVER_BGM_SRC = 'assets/gameover.wav'; // ゲームオーバー時に一度だけ流すBGM
 
   // --- DOM ---
   const canvas = document.getElementById('game');
@@ -69,18 +70,28 @@
   const finalEvalEl = document.getElementById('finalEval');
   const musicCreditEl = document.getElementById('musicCredit');
 
-  // --- Audio (簡易) ---
-  let htmlJumpAudio = null, htmlBgmAudio = null, htmlHitAudio = null, htmlExplodeAudio = null, htmlGameoverAudio = null;
+  // --- Audio: HTMLAudioElement を主に使う（file:// でも動きやすい） ---
+  let htmlJumpAudio = null;
+  let htmlBgmAudio = null;
+  let htmlHitAudio = null;
+  let htmlExplodeAudio = null;
+  let htmlGameoverAudio = null;
   let audioInitialized = false;
-  let audioCtx = null, jumpBuffer = null, hitBuffer = null, explodeBuffer = null, gameoverBuffer = null;
+
+  // AudioContext を使った低レイテンシ再生も試みる（可能なら）
+  let audioCtx = null;
+  let jumpBuffer = null;
+  let hitBuffer = null;
+  let explodeBuffer = null;
+  let gameoverBuffer = null;
 
   async function initAudioIfNeeded() {
     if (audioInitialized) return;
-    try { htmlJumpAudio = new Audio(JUMP_SOUND_SRC); htmlJumpAudio.preload = 'auto'; } catch(e){ htmlJumpAudio = null; }
-    try { htmlBgmAudio = new Audio(BGM_SRC); htmlBgmAudio.preload = 'auto'; htmlBgmAudio.loop = true; htmlBgmAudio.volume = 0.45; } catch(e){ htmlBgmAudio = null; }
-    try { htmlHitAudio = new Audio(HIT_SOUND_SRC); htmlHitAudio.preload = 'auto'; } catch(e){ htmlHitAudio = null; }
-    try { htmlExplodeAudio = new Audio(EXPLODE_SOUND_SRC); htmlExplodeAudio.preload = 'auto'; } catch(e){ htmlExplodeAudio = null; }
-    try { htmlGameoverAudio = new Audio(GAMEOVER_BGM_SRC); htmlGameoverAudio.preload = 'auto'; htmlGameoverAudio.loop = false; htmlGameoverAudio.volume = 0.7; } catch(e){ htmlGameoverAudio = null; }
+    try { htmlJumpAudio = new Audio(JUMP_SOUND_SRC); htmlJumpAudio.preload = 'auto'; } catch (e) { htmlJumpAudio = null; }
+    try { htmlBgmAudio = new Audio(BGM_SRC); htmlBgmAudio.preload = 'auto'; htmlBgmAudio.loop = true; htmlBgmAudio.volume = 0.45; } catch (e) { htmlBgmAudio = null; }
+    try { htmlHitAudio = new Audio(HIT_SOUND_SRC); htmlHitAudio.preload = 'auto'; } catch (e) { htmlHitAudio = null; }
+    try { htmlExplodeAudio = new Audio(EXPLODE_SOUND_SRC); htmlExplodeAudio.preload = 'auto'; } catch (e) { htmlExplodeAudio = null; }
+    try { htmlGameoverAudio = new Audio(GAMEOVER_BGM_SRC); htmlGameoverAudio.preload = 'auto'; htmlGameoverAudio.loop = false; htmlGameoverAudio.volume = 0.7; } catch (e) { htmlGameoverAudio = null; }
 
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -95,9 +106,14 @@
         const gResp = await fetch(GAMEOVER_BGM_SRC).catch(()=>null);
         if (gResp && gResp.ok) { const ab4 = await gResp.arrayBuffer().catch(()=>null); if (ab4) gameoverBuffer = await audioCtx.decodeAudioData(ab4).catch(()=>null); }
       }
-    } catch(e) {
-      audioCtx = null; jumpBuffer = null; hitBuffer = null; explodeBuffer = null; gameoverBuffer = null;
+    } catch (e) {
+      audioCtx = null;
+      jumpBuffer = null;
+      hitBuffer = null;
+      explodeBuffer = null;
+      gameoverBuffer = null;
     }
+
     audioInitialized = true;
   }
 
@@ -113,24 +129,70 @@
         src.start(0);
         return true;
       }
-    } catch(e){}
+    } catch (e) {}
     return false;
   }
-  function playJumpSound(){ if (playBuffer(jumpBuffer,0.9)) return; if (htmlJumpAudio){ const a=htmlJumpAudio.cloneNode(true); a.volume=0.9; a.play().catch(()=>{}); } }
-  function playHitSound(){ if (playBuffer(hitBuffer,1.0)) return; if (htmlHitAudio){ const a=htmlHitAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); } }
-  function playExplodeSound(){ if (playBuffer(explodeBuffer,1.0)) return; if (htmlExplodeAudio){ const a=htmlExplodeAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); } }
-  function playGameoverBgm(){ if (playBuffer(gameoverBuffer,0.9)) return; if (htmlGameoverAudio){ htmlGameoverAudio.pause(); try{ htmlGameoverAudio.currentTime=0; }catch(e){}; htmlGameoverAudio.play().catch(()=>{}); } }
-  function playBgm(){ if (!htmlBgmAudio) return; htmlBgmAudio.pause(); try{ htmlBgmAudio.currentTime=0; }catch(e){}; htmlBgmAudio.play().catch(()=>{}); }
-  function pauseBgm(){ if (!htmlBgmAudio) return; if (!htmlBgmAudio.paused) htmlBgmAudio.pause(); try{ htmlBgmAudio.currentTime=0; }catch(e){}; }
+
+  function playJumpSound() {
+    try {
+      if (playBuffer(jumpBuffer, 0.9)) return;
+      if (htmlJumpAudio) { const a = htmlJumpAudio.cloneNode(true); a.volume = 0.9; a.play().catch(()=>{}); }
+    } catch (e) {}
+  }
+  function playHitSound() {
+    try {
+      if (playBuffer(hitBuffer, 1.0)) return;
+      if (htmlHitAudio) { const a = htmlHitAudio.cloneNode(true); a.volume = 1.0; a.play().catch(()=>{}); }
+    } catch (e) {}
+  }
+  function playExplodeSound() {
+    try {
+      if (playBuffer(explodeBuffer, 1.0)) return;
+      if (htmlExplodeAudio) { const a = htmlExplodeAudio.cloneNode(true); a.volume = 1.0; a.play().catch(()=>{}); }
+    } catch (e) {}
+  }
+  function playGameoverBgm() {
+    try {
+      if (playBuffer(gameoverBuffer, 0.9)) return;
+      if (htmlGameoverAudio) { htmlGameoverAudio.pause(); try { htmlGameoverAudio.currentTime = 0; } catch(e){}; htmlGameoverAudio.play().catch(()=>{}); }
+    } catch (e) {}
+  }
+
+  // BGM control
+  function playBgm() {
+    try {
+      if (!htmlBgmAudio) return;
+      htmlBgmAudio.pause();
+      try { htmlBgmAudio.currentTime = 0; } catch(e) {}
+      htmlBgmAudio.play().catch(()=>{});
+    } catch (e) {}
+  }
+  function pauseBgm() {
+    try {
+      if (!htmlBgmAudio) return;
+      if (!htmlBgmAudio.paused) htmlBgmAudio.pause();
+      try { htmlBgmAudio.currentTime = 0; } catch(e) {}
+    } catch (e) {}
+  }
 
   // --- resize ---
-  function resize(){ const ratio = window.devicePixelRatio || 1; const w = Math.max(window.innerWidth,320); const h = Math.max(window.innerHeight,320); canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; canvas.width = Math.floor(w * ratio); canvas.height = Math.floor(h * ratio); ctx.setTransform(ratio,0,0,ratio,0,0); ctx.imageSmoothingEnabled = true; }
+  function resize() {
+    const ratio = window.devicePixelRatio || 1;
+    const w = Math.max(window.innerWidth, 320);
+    const h = Math.max(window.innerHeight, 320);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.width = Math.floor(w * ratio);
+    canvas.height = Math.floor(h * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+  }
   window.addEventListener('resize', resize);
   resize();
 
   // --- game constants & state ---
   const INITIAL_GAP = 300;
-  const MIN_GAP = 120;
+  const MIN_GAP = 120; // パイプの最小間隔を広めに
   const SCORE_RAMP_MAX = 100;
   const RAMP_DURATION_MS = 30000;
   const INITIAL_INTERVAL_MAX = 2600;
@@ -143,7 +205,7 @@
   const SPARK_CHANCE = 0.006;
   const COLOR_HUES = [200,160,280,40,10,120,260,340,30,195];
 
-  let ship = { x:80, y:150, vy:0, r:22, angle:0, thrusting:false };
+  let ship = { x: 80, y: 150, vy: 0, r: 22, angle: 0, thrusting: false };
   let pipes = [];
   let lastPipeTime = 0;
   let nextPipeDelay = INITIAL_INTERVAL_MAX;
@@ -158,37 +220,55 @@
   let enemyActive = false;
   let enemy = null; // object when present
   const ENEMY_HP_CAP = 10;
-  // **新規**: 最後に敵を出現させたスコアを記録（無限湧き防止）
-  let lastEnemySpawnScore = -9999; // 初期は十分小さくしておく
-  const ENEMY_SPAWN_SCORE_GAP = 10; // 敵を再出現させるために必要なスコア差（必要に応じて調整）
+  let lastEnemySpawnScore = -9999; // 無限湧き防止用
+  const ENEMY_SPAWN_SCORE_GAP = 10; // 敵を再出現させるために必要なスコア差
 
   // --- bullets ---
   const playerBullets = [];
   const enemyBullets = [];
 
-  // --- background assets (省略せず保持) ---
+  // --- background / particles ---
   const starLayers = [
-    {count:80, speed:0.02, sizeRange:[0.6,1.6], color:'#e8f8ff', offset:Math.random()*1000},
-    {count:40, speed:0.06, sizeRange:[1.2,2.6], color:'#cfefff', offset:Math.random()*1000},
-    {count:18, speed:0.12, sizeRange:[1.8,3.6], color:'#ffffff', offset:Math.random()*1000}
+    {count: 80, speed: 0.02, sizeRange: [0.6,1.6], color: '#e8f8ff', offset: Math.random()*1000},
+    {count: 40, speed: 0.06, sizeRange: [1.2,2.6], color: '#cfefff', offset: Math.random()*1000},
+    {count: 18, speed: 0.12, sizeRange: [1.8,3.6], color: '#ffffff', offset: Math.random()*1000}
   ];
   const stars = [];
   for (let li=0; li<starLayers.length; li++){
     const layer = starLayers[li];
     for (let i=0;i<layer.count;i++){
-      stars.push({ layer:li, x:Math.random(), y:Math.random(), size: layer.sizeRange[0] + Math.random()*(layer.sizeRange[1]-layer.sizeRange[0]), tw: Math.random()*1000 });
+      stars.push({
+        layer: li,
+        x: Math.random(),
+        y: Math.random(),
+        size: layer.sizeRange[0] + Math.random()*(layer.sizeRange[1]-layer.sizeRange[0]),
+        tw: Math.random()*1000
+      });
     }
   }
   const nebulaLayers = [
-    {colorA:'#0b2a44', colorB:'#1b4a66', alpha:0.12, speed:0.02, scale:1.6, offset:Math.random()*1000},
-    {colorA:'#122b3f', colorB:'#0f3a5a', alpha:0.08, speed:0.035, scale:1.1, offset:Math.random()*1000},
-    {colorA:'#0f2b44', colorB:'#072a3a', alpha:0.06, speed:0.06, scale:0.8, offset:Math.random()*1000}
+    {colorA: '#0b2a44', colorB: '#1b4a66', alpha: 0.12, speed: 0.02, scale: 1.6, offset: Math.random()*1000},
+    {colorA: '#122b3f', colorB: '#0f3a5a', alpha: 0.08, speed: 0.035, scale: 1.1, offset: Math.random()*1000},
+    {colorA: '#0f2b44', colorB: '#072a3a', alpha: 0.06, speed: 0.06, scale: 0.8, offset: Math.random()*1000}
   ];
   const meteors = [];
   for (let i=0;i<12;i++){
-    meteors.push({ x:Math.random(), y:Math.random(), vx:-0.002 - Math.random()*0.006, vy:0.001 + Math.random()*0.003, life:Math.random()*4000, t:Math.random()*6000, size:1 + Math.random()*2 });
+    meteors.push({
+      x: Math.random(), y: Math.random(), vx: -0.002 - Math.random()*0.006, vy: 0.001 + Math.random()*0.003,
+      life: Math.random()*4000, t: Math.random()*6000, size: 1 + Math.random()*2
+    });
   }
-  function createNoiseCanvas(w,h,alpha){ const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d'); const img=g.createImageData(w,h); for (let i=0;i<img.data.length;i+=4){ const v=200+Math.floor(Math.random()*55); img.data[i]=v; img.data[i+1]=v; img.data[i+2]=v; img.data[i+3]=Math.floor(255*alpha*Math.random()); } g.putImageData(img,0,0); return c; }
+  function createNoiseCanvas(w,h,alpha){
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    const img = g.createImageData(w,h);
+    for (let i=0;i<img.data.length;i+=4){
+      const v = 200 + Math.floor(Math.random()*55);
+      img.data[i]=v; img.data[i+1]=v; img.data[i+2]=v; img.data[i+3]=Math.floor(255*alpha*Math.random());
+    }
+    g.putImageData(img,0,0);
+    return c;
+  }
   const noise = createNoiseCanvas(128,128,0.04);
 
   // --- helpers ---
@@ -198,6 +278,59 @@
   function gapAtSpawn() { const sf = Math.min(1, score / SCORE_RAMP_MAX); return Math.round(INITIAL_GAP + (MIN_GAP - INITIAL_GAP) * sf); }
   function circleRectIntersect(cx, cy, r, rx, ry, rw, rh){ const nearestX = Math.max(rx, Math.min(cx, rx + rw)); const nearestY = Math.max(ry, Math.min(cy, ry + rh)); const dx = cx - nearestX; const dy = cy - nearestY; return (dx*dx + dy*dy) < (r*r); }
   function hslToRgb(h,s,l){ s/=100; l/=100; const k = n => (n + h/30) % 12; const a = s * Math.min(l,1-l); const f = n => l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n),1))); return [Math.round(255*f(0)), Math.round(255*f(8)), Math.round(255*f(4))]; }
+
+  // --- セピア遷移ユーティリティ ---
+  let sepiaAnim = null;
+  function applySepiaTransition(duration_ms = 800) {
+    const el = canvas;
+    if (!el) return;
+    if (sepiaAnim) {
+      cancelAnimationFrame(sepiaAnim.raf);
+      sepiaAnim = null;
+    }
+    const start = performance.now();
+    const from = 0;
+    const to = 1;
+    sepiaAnim = { raf: null };
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration_ms);
+      const ease = t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t;
+      const sep = from + (to - from) * ease;
+      el.style.filter = `sepia(${sep}) saturate(${0.6 + 0.4*(1-sep)}) contrast(${0.95})`;
+      if (t < 1) {
+        sepiaAnim.raf = requestAnimationFrame(step);
+      } else {
+        sepiaAnim = null;
+      }
+    }
+    sepiaAnim.raf = requestAnimationFrame(step);
+  }
+  function clearSepiaTransition(duration_ms = 200) {
+    const el = canvas;
+    if (!el) return;
+    if (sepiaAnim) {
+      cancelAnimationFrame(sepiaAnim.raf);
+      sepiaAnim = null;
+    }
+    if (duration_ms <= 0) {
+      el.style.filter = 'none';
+      return;
+    }
+    const start = performance.now();
+    const initial = 1;
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration_ms);
+      const ease = 1 - t;
+      const sep = initial * ease;
+      el.style.filter = `sepia(${sep}) saturate(${0.6 + 0.4*(1-sep)}) contrast(${0.95})`;
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        el.style.filter = 'none';
+      }
+    }
+    requestAnimationFrame(step);
+  }
 
   // --- input handlers ---
   function onPointerDown(e){
@@ -213,8 +346,7 @@
 
     playJumpSound();
 
-    // プレイヤー弾は「敵が出ているときだけ」ではなく、仕様に合わせて
-    // 敵が出ているときに確実に発射されるようにする（以前のバグ修正を維持）
+    // プレイヤー弾は敵が出ているときに発射される仕様（修正済み）
     const enemyPresent = (typeof enemy !== 'undefined' && enemy !== null) || enemyActive;
     if (enemyPresent) {
       const bx = ship.x + ship.r * 0.9;
@@ -232,6 +364,7 @@
 
   // --- spawn pipe ---
   function spawnPipe(){
+    // 敵出現中でもパイプは出す（ユーザー要望に合わせて）
     const ch = canvas.clientHeight;
     const gap = gapAtSpawn();
     const minTop = 40;
@@ -240,6 +373,7 @@
     const bucket = Math.floor(score / 10);
     const hue = COLOR_HUES[bucket % COLOR_HUES.length];
 
+    // horizontal spacing safety
     const minPixelSpacing = Math.max(260, PIPE_WIDTH * 2);
     if (pipes.length > 0) {
       const last = pipes[pipes.length - 1];
@@ -257,26 +391,25 @@
     lastPipeTime = performance.now();
   }
 
-  // --- spawn enemy (修正) ---
+  // --- spawn enemy (修正: パイプは消さない) ---
   function spawnEnemyUFO() {
     enemyActive = true;
     const hp = Math.min(ENEMY_HP_CAP, Math.max(1, Math.floor(score / 5) + 1));
     enemy = {
       x: canvas.clientWidth + 80,
-      y: Math.floor(canvas.clientHeight * (0.15 + Math.random() * 0.5)), // ランダム高さ
+      y: Math.floor(canvas.clientHeight * (0.15 + Math.random() * 0.5)),
       vx: -2.2,
       vy: 0,
       r: 34,
       hp: hp,
       fireTimer: 0,
-      fireInterval: 700 + Math.floor(Math.random()*300), // 早めに撃つ
+      fireInterval: 700 + Math.floor(Math.random()*300),
       patternPhase: Math.floor(Math.random()*3),
       entryDone: false,
       hue: Math.floor(Math.random()*360)
     };
-    // **重要**: 敵を出現させたスコアを記録して無限湧きを防ぐ
     lastEnemySpawnScore = score;
-    // パイプの spawn を抑制するため lastPipeTime を更新
+    // 以前はここで pipes.length = 0 としていたが、ユーザー要望でパイプは消さない
     lastPipeTime = performance.now();
   }
 
@@ -393,20 +526,19 @@
       }
     }
 
-    if (!enemyActive) {
-      for (let p of pipes) {
-        const topRect = { x: p.x, y: 0, w: PIPE_WIDTH, h: p.top };
-        const bottomRect = { x: p.x, y: p.top + p.gap, w: PIPE_WIDTH, h: canvas.clientHeight - (p.top + p.gap) };
-        if (circleRectIntersect(ship.x, ship.y, ship.r, topRect.x, topRect.y, topRect.w, topRect.h) ||
-            circleRectIntersect(ship.x, ship.y, ship.r, bottomRect.x, bottomRect.y, bottomRect.w, bottomRect.h)) {
-          endGame();
-          return;
-        }
+    // パイプとの当たり判定は常に有効（敵が出ていてもパイプは消さないため）
+    for (let p of pipes) {
+      const topRect = { x: p.x, y: 0, w: PIPE_WIDTH, h: p.top };
+      const bottomRect = { x: p.x, y: p.top + p.gap, w: PIPE_WIDTH, h: canvas.clientHeight - (p.top + p.gap) };
+      if (circleRectIntersect(ship.x, ship.y, ship.r, topRect.x, topRect.y, topRect.w, topRect.h) ||
+          circleRectIntersect(ship.x, ship.y, ship.r, bottomRect.x, bottomRect.y, bottomRect.w, bottomRect.h)) {
+        endGame();
+        return;
       }
     }
   }
 
-  // --- drawing (省略せず保持) ---
+  // --- drawing ---
   function drawBackground() {
     const w = canvas.clientWidth, h = canvas.clientHeight;
     const g = ctx.createLinearGradient(0,0,0,h);
@@ -713,7 +845,8 @@
 
     if (enemyActive) updateEnemy(dt);
 
-    const speed = enemyActive ? 0 : currentPipeSpeed();
+    // パイプは敵が出ていても動かす（ユーザー要望）
+    const speed = currentPipeSpeed();
     for (let p of pipes) {
       p.x -= speed;
       if (!p.passed && p.x + PIPE_WIDTH < ship.x - ship.r) {
@@ -724,11 +857,9 @@
     }
     pipes = pipes.filter(p => p.x + PIPE_WIDTH > -40);
 
-    if (!enemyActive && performance.now() - lastPipeTime > nextPipeDelay) spawnPipe();
+    if (performance.now() - lastPipeTime > nextPipeDelay) spawnPipe();
 
-    // --- 敵出現判定（修正） ---
-    // 敵がいないかつ敵出現フラグが立っていないこと、かつスコアが
-    // 最後に敵を出したスコア + ENEMY_SPAWN_SCORE_GAP 以上であれば出現
+    // 敵出現判定（無限湧き防止）
     if (!enemyActive && !enemy && score >= 5 && score >= lastEnemySpawnScore + ENEMY_SPAWN_SCORE_GAP) {
       spawnEnemyUFO();
     }
@@ -761,6 +892,7 @@
     messageEl.style.display = 'inline-block';
     messageEl.textContent = 'ゲームオーバー\nScore: ' + score + '\n評価: ' + evaluateScore(score);
 
+    // play hit/explode sound and then gameover BGM
     initAudioIfNeeded().then(()=>{
       if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
       playHitSound();
@@ -771,6 +903,9 @@
       pauseBgm();
       playGameoverBgm();
     });
+
+    // セピアを徐々にかける
+    applySepiaTransition(900);
 
     ignoreInputUntil = performance.now() + 1000;
   }
@@ -783,7 +918,7 @@
     enemy = null;
     enemyActive = false;
     score = 0;
-    lastEnemySpawnScore = -9999; // リセット時に再度出現可能にする
+    lastEnemySpawnScore = -9999;
     scoreEl.textContent = 'Score: 0';
     running = false;
     gameOver = false;
@@ -795,10 +930,14 @@
     gameOverPanel.style.display = 'none';
     gameOverPanel.setAttribute('aria-hidden', 'true');
 
+    // stop any gameover audio if playing
     try {
       if (htmlGameoverAudio && !htmlGameoverAudio.paused) { htmlGameoverAudio.pause(); try { htmlGameoverAudio.currentTime = 0; } catch(e){} }
     } catch(e){}
     pauseBgm();
+
+    // セピアを解除（フェードアウト）
+    clearSepiaTransition(220);
   }
 
   function loop(ts) {
@@ -818,6 +957,9 @@
     startTime = performance.now();
     lastPipeTime = performance.now();
     if (pipes.length === 0) spawnPipe();
+
+    // セピアが残っている場合は解除
+    clearSepiaTransition(120);
 
     initAudioIfNeeded().then(()=>{
       if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
