@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>宇宙風パイプ（弾幕密度調整・音声をMP3へ）</title>
+<title>宇宙風パイプ（弾幕密度調整・ゲームオーバーBGM停止対応）</title>
 <style>
   html,body { height:100%; margin:0; background:#021022; -webkit-tap-highlight-color: transparent; }
   canvas#game {
@@ -74,6 +74,8 @@
   let htmlJumpAudio = null, htmlBgmAudio = null, htmlHitAudio = null, htmlExplodeAudio = null, htmlGameoverAudio = null;
   let audioInitialized = false;
   let audioCtx = null, jumpBuffer = null, hitBuffer = null, explodeBuffer = null, gameoverBuffer = null;
+  // If AudioContext is used to play gameover buffer, keep reference to stop it later
+  let gameoverSource = null;
 
   async function initAudioIfNeeded() {
     if (audioInitialized) return;
@@ -112,17 +114,87 @@
         src.connect(g);
         g.connect(audioCtx.destination);
         src.start(0);
-        return true;
+        return src;
       }
     } catch(e){}
-    return false;
+    return null;
   }
-  function playJumpSound(){ if (playBuffer(jumpBuffer,0.9)) return; if (htmlJumpAudio){ const a=htmlJumpAudio.cloneNode(true); a.volume=0.9; a.play().catch(()=>{}); } }
-  function playHitSound(){ if (playBuffer(hitBuffer,1.0)) return; if (htmlHitAudio){ const a=htmlHitAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); } }
-  function playExplodeSound(){ if (playBuffer(explodeBuffer,1.0)) return; if (htmlExplodeAudio){ const a=htmlExplodeAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); } }
-  function playGameoverBgm(){ if (playBuffer(gameoverBuffer,0.9)) return; if (htmlGameoverAudio){ htmlGameoverAudio.pause(); try{ htmlGameoverAudio.currentTime=0; }catch(e){}; htmlGameoverAudio.play().catch(()=>{}); } }
-  function playBgm(){ if (!htmlBgmAudio) return; htmlBgmAudio.pause(); try{ htmlBgmAudio.currentTime=0; }catch(e){}; htmlBgmAudio.play().catch(()=>{}); }
-  function pauseBgm(){ if (!htmlBgmAudio) return; if (!htmlBgmAudio.paused) htmlBgmAudio.pause(); try{ htmlBgmAudio.currentTime=0; }catch(e){}; }
+  function playJumpSound(){ 
+    try {
+      const src = playBuffer(jumpBuffer,0.9);
+      if (src) return;
+      if (htmlJumpAudio){ const a=htmlJumpAudio.cloneNode(true); a.volume=0.9; a.play().catch(()=>{}); }
+    } catch(e){}
+  }
+  function playHitSound(){ 
+    try {
+      const src = playBuffer(hitBuffer,1.0);
+      if (src) return;
+      if (htmlHitAudio){ const a=htmlHitAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); }
+    } catch(e){}
+  }
+  function playExplodeSound(){ 
+    try {
+      const src = playBuffer(explodeBuffer,1.0);
+      if (src) return;
+      if (htmlExplodeAudio){ const a=htmlExplodeAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); }
+    } catch(e){}
+  }
+
+  // Play gameover BGM and keep reference so it can be stopped when restarting
+  function playGameoverBgm() {
+    try {
+      // stop any previous gameoverSource first
+      stopGameoverBgm();
+      if (audioCtx && gameoverBuffer) {
+        const src = audioCtx.createBufferSource();
+        src.buffer = gameoverBuffer;
+        const g = audioCtx.createGain();
+        g.gain.value = 0.9;
+        src.connect(g);
+        g.connect(audioCtx.destination);
+        src.start(0);
+        gameoverSource = src;
+        // clear reference when ended
+        src.onended = () => { if (gameoverSource === src) gameoverSource = null; };
+        return;
+      }
+      if (htmlGameoverAudio) { htmlGameoverAudio.pause(); try { htmlGameoverAudio.currentTime = 0; } catch(e){}; htmlGameoverAudio.play().catch(()=>{}); }
+    } catch (e) {}
+  }
+
+  // Stop any playing gameover BGM (AudioContext source or HTMLAudio)
+  function stopGameoverBgm() {
+    try {
+      if (gameoverSource) {
+        try { gameoverSource.stop(); } catch(e) {}
+        gameoverSource = null;
+      }
+    } catch(e){}
+    try {
+      if (htmlGameoverAudio && !htmlGameoverAudio.paused) {
+        htmlGameoverAudio.pause();
+        try { htmlGameoverAudio.currentTime = 0; } catch(e){}
+      }
+    } catch(e){}
+  }
+
+  // BGM control
+  function playBgm() {
+    try {
+      if (!htmlBgmAudio) return;
+      htmlBgmAudio.pause();
+      try { htmlBgmAudio.currentTime = 0; } catch(e) {}
+      htmlBgmAudio.play().catch(()=>{});
+    } catch (e) {}
+  }
+  function pauseBgm() {
+    try {
+      if (!htmlBgmAudio) return;
+      if (!htmlBgmAudio.paused) htmlBgmAudio.pause();
+      try { htmlBgmAudio.currentTime = 0; } catch(e) {}
+    } catch (e) {}
+  }
 
   // --- resize ---
   function resize(){ const ratio = window.devicePixelRatio || 1; const w = Math.max(window.innerWidth,320); const h = Math.max(window.innerHeight,320); canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; canvas.width = Math.floor(w * ratio); canvas.height = Math.floor(h * ratio); ctx.setTransform(ratio,0,0,ratio,0,0); ctx.imageSmoothingEnabled = true; }
@@ -938,6 +1010,9 @@
   }
 
   function reset() {
+    // stop any gameover BGM when resetting
+    stopGameoverBgm();
+
     ship = { x: 80, y: canvas.clientHeight/2 - 10, vy: 0, r: 22, angle: 0, thrusting: false };
     pipes = [];
     playerBullets.length = 0;
@@ -975,6 +1050,9 @@
   }
 
   function start() {
+    // stop any gameover BGM when starting/restarting the game
+    stopGameoverBgm();
+
     running = true;
     gameOver = false;
     messageEl.style.display = 'none';
