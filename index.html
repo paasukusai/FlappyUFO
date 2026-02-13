@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>宇宙風パイプ（敵出現で即撃ち開始）</title>
+<title>宇宙風パイプ（敵速度調整・最小間隔拡張）</title>
 <style>
   html,body { height:100%; margin:0; background:#021022; -webkit-tap-highlight-color: transparent; }
   canvas#game {
@@ -118,27 +118,9 @@
     } catch(e){}
     return null;
   }
-  function playJumpSound(){ 
-    try {
-      const src = playBuffer(jumpBuffer,0.9);
-      if (src) return;
-      if (htmlJumpAudio){ const a=htmlJumpAudio.cloneNode(true); a.volume=0.9; a.play().catch(()=>{}); }
-    } catch(e){}
-  }
-  function playHitSound(){ 
-    try {
-      const src = playBuffer(hitBuffer,1.0);
-      if (src) return;
-      if (htmlHitAudio){ const a=htmlHitAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); }
-    } catch(e){}
-  }
-  function playExplodeSound(){ 
-    try {
-      const src = playBuffer(explodeBuffer,1.0);
-      if (src) return;
-      if (htmlExplodeAudio){ const a=htmlExplodeAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); }
-    } catch(e){}
-  }
+  function playJumpSound(){ if (playBuffer(jumpBuffer,0.9)) return; if (htmlJumpAudio){ const a=htmlJumpAudio.cloneNode(true); a.volume=0.9; a.play().catch(()=>{}); } }
+  function playHitSound(){ if (playBuffer(hitBuffer,1.0)) return; if (htmlHitAudio){ const a=htmlHitAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); } }
+  function playExplodeSound(){ if (playBuffer(explodeBuffer,1.0)) return; if (htmlExplodeAudio){ const a=htmlExplodeAudio.cloneNode(true); a.volume=1.0; a.play().catch(()=>{}); } }
 
   function playGameoverBgm() {
     try {
@@ -197,7 +179,8 @@
 
   // --- game constants & state ---
   const INITIAL_GAP = 300;
-  const MIN_GAP = 140;
+  // パイプの最小縦間隔を約1.5倍に拡張（140 -> 210）
+  const MIN_GAP = 210;
   const SCORE_RAMP_MAX = 100;
   const RAMP_DURATION_MS = 30000;
   const INITIAL_INTERVAL_MAX = 2600;
@@ -213,7 +196,8 @@
   const PIPE_SPEED_BASE_PPS = 120;
   const PIPE_SPEED_MAX_PPS = 220;
   const PLAYER_BULLET_SPEED_PPS = 520;
-  const ENEMY_BASE_MAX_VX_PPS = 60;
+  // 敵の基本最大速度を上げる（60 -> 90）
+  const ENEMY_BASE_MAX_VX_PPS = 90;
   const ENEMY_MAX_EXTRA_PER_SCORE = 1.6;
   const ENEMY_HP_CAP = 10;
 
@@ -366,9 +350,10 @@
     const h = canvas.clientHeight;
     const startY = Math.floor(h * (0.15 + Math.random() * 0.5));
     enemy = {
+      // entry speed increased (was -80 -> now -120)
       x: canvas.clientWidth + 80,
       y: startY,
-      vx: -80,
+      vx: -120,
       vy: 0,
       r: 34,
       hp: hp,
@@ -391,15 +376,10 @@
     lastEnemySpawnScore = score;
     lastPipeTime = performance.now();
 
-    // ここで「出現したらすぐ撃つ」動作を行う
-    // patternPhase に基づいて即座に弾を発射し、fireTimer をリセットして次の発射間隔を通常どおりにする
     try {
       fireEnemyPattern(enemy.patternPhase);
-    } catch (e) {
-      // 発射に失敗してもゲームは継続
-    }
+    } catch (e) {}
     enemy.fireTimer = 0;
-    // 次の発射間隔はランダムに再設定（間隔が短すぎないように）
     enemy.fireInterval = ENEMY_FIRE_BASE_MIN + Math.floor(Math.random()*ENEMY_FIRE_RANDOM);
   }
 
@@ -423,8 +403,6 @@
         enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
         enemy.lastManeuver = now;
       }
-      // entry 中でも弾のタイマーは進める（spawn 時に即撃ちしているため、ここでは通常の発射は entryDone 後に行う）
-      // ただし entry 中に連続で撃ちすぎないように fireTimer の扱いはそのままにする
     }
 
     const scoreFactor = Math.min(1.5, score * 0.02);
@@ -435,7 +413,8 @@
 
     if (enemy.targetX === null) enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
     const dx = enemy.targetX - enemy.x;
-    const desiredVx = Math.sign(dx) * (40 + 40 * speedMultiplier);
+    // desiredVx increased: base 60, multiplier 60 (was 40 + 40*speedMultiplier)
+    const desiredVx = Math.sign(dx) * (60 + 60 * speedMultiplier);
     const accel = 120;
     if (enemy.vx < desiredVx) enemy.vx = Math.min(desiredVx, enemy.vx + accel * dt);
     else enemy.vx = Math.max(desiredVx, enemy.vx - accel * dt);
