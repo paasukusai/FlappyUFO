@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>宇宙風パイプ（敵速度をスコアで段階的に・モバイル速度修正）</title>
+<title>宇宙風パイプ（弾幕密度調整・音声をMP3へ）</title>
 <style>
   html,body { height:100%; margin:0; background:#021022; -webkit-tap-highlight-color: transparent; }
   canvas#game {
@@ -53,12 +53,12 @@
 
 <script>
 (() => {
-  // --- 設定: 音声ファイルのパスをプロジェクトに合わせて変更してください ---
-  const JUMP_SOUND_SRC = 'assets/jump.wav';
+  // --- 音声ファイルをすべて mp3 に変更しました ---
+  const JUMP_SOUND_SRC = 'assets/jump.mp3';
   const BGM_SRC = 'assets/bgm.mp3';
-  const HIT_SOUND_SRC = 'assets/hit.wav';
-  const EXPLODE_SOUND_SRC = 'assets/explode.wav';
-  const GAMEOVER_BGM_SRC = 'assets/gameover.wav';
+  const HIT_SOUND_SRC = 'assets/hit.mp3';
+  const EXPLODE_SOUND_SRC = 'assets/explode.mp3';
+  const GAMEOVER_BGM_SRC = 'assets/gameover.mp3';
 
   // --- DOM ---
   const canvas = document.getElementById('game');
@@ -70,7 +70,7 @@
   const finalEvalEl = document.getElementById('finalEval');
   const musicCreditEl = document.getElementById('musicCredit');
 
-  // --- Audio (簡易) ---
+  // --- Audio (HTMLAudio + optional AudioContext) ---
   let htmlJumpAudio = null, htmlBgmAudio = null, htmlHitAudio = null, htmlExplodeAudio = null, htmlGameoverAudio = null;
   let audioInitialized = false;
   let audioCtx = null, jumpBuffer = null, hitBuffer = null, explodeBuffer = null, gameoverBuffer = null;
@@ -144,13 +144,17 @@
   const SPARK_CHANCE = 0.006;
   const COLOR_HUES = [200,160,280,40,10,120,260,340,30,195];
 
-  // Speeds are in pixels per second (time-based movement to avoid mobile/PC discrepancy)
-  const PIPE_SPEED_BASE_PPS = 120; // base pipe speed px/s
-  const PIPE_SPEED_MAX_PPS = 220;  // max pipe speed px/s as difficulty ramps
-  const PLAYER_BULLET_SPEED_PPS = 520; // player bullet speed px/s
-  const ENEMY_BASE_MAX_VX_PPS = 60; // enemy horizontal speed cap base px/s
-  const ENEMY_MAX_EXTRA_PER_SCORE = 1.6; // additional multiplier per score scaling cap
+  // Speeds are in pixels per second (time-based movement)
+  const PIPE_SPEED_BASE_PPS = 120;
+  const PIPE_SPEED_MAX_PPS = 220;
+  const PLAYER_BULLET_SPEED_PPS = 520;
+  const ENEMY_BASE_MAX_VX_PPS = 60;
+  const ENEMY_MAX_EXTRA_PER_SCORE = 1.6;
   const ENEMY_HP_CAP = 10;
+
+  // Fire interval baseline increased to make patterns more spaced
+  const ENEMY_FIRE_BASE_MIN = 900; // ms (was ~600)
+  const ENEMY_FIRE_RANDOM = 400;   // ms random addition
 
   let ship = { x: 80, y: 150, vy: 0, r: 22, angle: 0, thrusting: false };
   let pipes = [];
@@ -299,7 +303,7 @@
     lastPipeTime = performance.now();
   }
 
-  // --- spawn enemy (より動き回る挙動) ---
+  // --- spawn enemy ---
   function spawnEnemyUFO() {
     enemyActive = true;
     const hp = Math.min(ENEMY_HP_CAP, Math.max(1, Math.floor(score / 5) + 1));
@@ -313,7 +317,8 @@
       r: 34,
       hp: hp,
       fireTimer: 0,
-      fireInterval: 600 + Math.floor(Math.random()*300),
+      // increased base interval so patterns are more spaced initially
+      fireInterval: ENEMY_FIRE_BASE_MIN + Math.floor(Math.random()*ENEMY_FIRE_RANDOM),
       patternPhase: Math.floor(Math.random()*3),
       entryDone: false,
       hue: Math.floor(Math.random()*360),
@@ -334,7 +339,7 @@
     lastPipeTime = performance.now();
   }
 
-  // --- enemy behavior & firing (修正版: dt 秒単位で計算) ---
+  // --- enemy behavior & firing (dt 秒単位で計算) ---
   function updateEnemy(dtMs) {
     if (!enemy) return;
     const dt = dtMs / 1000; // seconds
@@ -360,7 +365,6 @@
     }
 
     // difficulty-based speed multiplier (gradual by score)
-    // small increase per score, capped
     const scoreFactor = Math.min(1.5, score * 0.02); // up to +150%
     const speedMultiplier = 1 + scoreFactor;
 
@@ -372,7 +376,6 @@
     if (enemy.targetX === null) enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
     const dx = enemy.targetX - enemy.x;
     const desiredVx = Math.sign(dx) * (40 + 40 * speedMultiplier); // desired speed px/s
-    // smooth velocity change
     const accel = 120; // px/s^2
     if (enemy.vx < desiredVx) enemy.vx = Math.min(desiredVx, enemy.vx + accel * dt);
     else enemy.vx = Math.max(desiredVx, enemy.vx - accel * dt);
@@ -427,44 +430,62 @@
     if (enemy.y < minY) { enemy.y = minY; enemy.vy = Math.abs(enemy.vy)*0.4; }
     if (enemy.y > maxY) { enemy.y = maxY; enemy.vy = -Math.abs(enemy.vy)*0.4; }
 
-    // firing timer (fireInterval adjusted slightly by score)
+    // firing timer (fireInterval adjusted slightly by score but kept reasonably spaced)
     enemy.fireTimer += dtMs;
-    const adjustedFireInterval = Math.max(300, enemy.fireInterval - Math.floor(score * 6)); // faster with score
+    // make adjusted interval decrease more gently with score so spacing remains comfortable
+    const adjustedFireInterval = Math.max(500, enemy.fireInterval - Math.floor(score * 4)); // ms
     if (enemy.fireTimer >= adjustedFireInterval) {
       enemy.fireTimer = 0;
       enemy.patternPhase = (enemy.patternPhase + 1) % 3;
       fireEnemyPattern(enemy.patternPhase);
-      enemy.fireInterval = 600 + Math.floor(Math.random()*400);
+      // after firing, set a slightly larger next base to keep spacing
+      enemy.fireInterval = ENEMY_FIRE_BASE_MIN + Math.floor(Math.random()*ENEMY_FIRE_RANDOM);
     }
   }
 
-  // --- enemy firing patterns (dt-independent creation) ---
+  // --- 敵弾幕密度をスコアに応じて増やす（控えめに） ---
+  function computeBulletCount(base) {
+    // base: minimal bullets for pattern
+    // scale with score: gentler increase than before, cap to avoid overload
+    const extra = Math.floor(score * 0.08); // reduced from 0.12 -> 0.08
+    const n = Math.min(22, base + extra); // cap slightly lower
+    return Math.max(1, n);
+  }
+
+  // --- enemy firing patterns (密度調整済み・間隔を広げるため速度も調整) ---
   function fireEnemyPattern(phase) {
     if (!enemy) return;
     const ex = enemy.x - enemy.r*0.6;
     const ey = enemy.y + Math.sin(enemy.wobblePhase) * enemy.wobbleAmp;
+
     if (phase === 0) {
-      const n = 10;
+      // radial pattern (start thinner)
+      const base = 5; // reduced base
+      const n = computeBulletCount(base);
       for (let i=0;i<n;i++){
         const a = (i / n) * Math.PI * 2;
-        const s = 120 + Math.random()*40; // px/s
+        const s = 110 + Math.random()*30 + Math.min(80, score * 0.8); // slightly lower speeds
         enemyBullets.push({ x: ex, y: ey, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 4, ttl: 6000 });
       }
     } else if (phase === 1) {
+      // aimed spread (start thin)
+      const base = 3;
+      const n = computeBulletCount(base);
       const dx = ship.x - ex, dy = ship.y - ey;
-      const base = Math.atan2(dy, dx);
-      const spread = 0.6;
-      const n = 7;
+      const baseAng = Math.atan2(dy, dx);
+      const spread = 0.5 + Math.min(1.0, score * 0.008); // slightly narrower spread
       for (let i=0;i<n;i++){
-        const a = base + (i - (n-1)/2) * (spread / (n-1));
-        const s = 180 + Math.random()*60;
+        const a = baseAng + (i - (n-1)/2) * (spread / Math.max(1, (n-1)));
+        const s = 140 + Math.random()*40 + Math.min(80, score * 0.8);
         enemyBullets.push({ x: ex, y: ey, vx: Math.cos(a)*s, vy: Math.sin(a)*s, r: 4, ttl: 6000 });
       }
     } else {
-      const n = 6;
+      // homing-ish salvo (start thin)
+      const base = 2;
+      const n = computeBulletCount(base);
       for (let i=0;i<n;i++){
-        const a = Math.PI * 0.2 * (i - (n-1)/2);
-        const s = 120 + Math.random()*40;
+        const a = Math.PI * 0.18 * (i - (n-1)/2);
+        const s = 110 + Math.random()*30 + Math.min(70, score * 0.6);
         enemyBullets.push({ x: ex, y: ey, vx: Math.cos(a)*s - 80, vy: Math.sin(a)*s, r: 4, ttl: 7000, homing: true });
       }
     }
@@ -970,10 +991,18 @@
     }).catch(()=>{ playBgm(); });
   }
 
+  // --- デバッグ用: キーボード U でスコアを +1 ---
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space') { onPointerDown(e); }
+    if (e.code === 'KeyU') {
+      score++;
+      scoreEl.textContent = 'Score: ' + score;
+    }
+  });
+
   // init
   reset();
   requestAnimationFrame(loop);
-  window.addEventListener('keydown', e => { if (e.code === 'Space') onPointerDown(e); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) pauseBgm(); else if (running) playBgm(); });
 
 })();
