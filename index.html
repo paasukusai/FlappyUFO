@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>宇宙風パイプ（敵速度調整・最小間隔拡張）</title>
+<title>宇宙風パイプ（敵は画面左半分に入らない）</title>
 <style>
   html,body { height:100%; margin:0; background:#021022; -webkit-tap-highlight-color: transparent; }
   canvas#game {
@@ -350,7 +350,6 @@
     const h = canvas.clientHeight;
     const startY = Math.floor(h * (0.15 + Math.random() * 0.5));
     enemy = {
-      // entry speed increased (was -80 -> now -120)
       x: canvas.clientWidth + 80,
       y: startY,
       vx: -120,
@@ -362,8 +361,9 @@
       patternPhase: Math.floor(Math.random()*3),
       entryDone: false,
       hue: Math.floor(Math.random()*360),
-      patrolLeft: Math.floor(canvas.clientWidth * 0.18),
-      patrolRight: Math.floor(canvas.clientWidth * 0.82),
+      // patrolLeft を画面中央（左半分の境界）より右に設定して、敵が左半分に入らないようにする
+      patrolLeft: Math.floor(Math.max(canvas.clientWidth * 0.5, canvas.clientWidth * 0.18)),
+      patrolRight: Math.floor(canvas.clientWidth * 0.92),
       targetX: null,
       wobblePhase: Math.random()*Math.PI*2,
       wobbleAmp: 14 + Math.random()*12,
@@ -372,7 +372,8 @@
       maneuverInterval: 800 + Math.random()*1200,
       dodgeCooldown: 0
     };
-    enemy.targetX = Math.floor(canvas.clientWidth * (0.6 + Math.random()*0.15));
+    // targetX を patrol 範囲内に設定（必ず左半分より右）
+    enemy.targetX = enemy.patrolLeft + Math.random() * Math.max(1, (enemy.patrolRight - enemy.patrolLeft));
     lastEnemySpawnScore = score;
     lastPipeTime = performance.now();
 
@@ -398,11 +399,13 @@
         enemy.entryDone = true;
         enemy.vx = 0;
         enemy.fireTimer = 0;
-        enemy.patrolLeft = Math.floor(w * 0.18);
-        enemy.patrolRight = Math.floor(w * 0.82);
-        enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
+        // 再設定: patrolLeft を必ず画面中央より右に
+        enemy.patrolLeft = Math.floor(Math.max(w * 0.5, w * 0.18));
+        enemy.patrolRight = Math.floor(w * 0.92);
+        enemy.targetX = enemy.patrolLeft + Math.random() * Math.max(1, (enemy.patrolRight - enemy.patrolLeft));
         enemy.lastManeuver = now;
       }
+      // entry 中はそのまま（spawn 時に即撃ち済み）
     }
 
     const scoreFactor = Math.min(1.5, score * 0.02);
@@ -411,9 +414,8 @@
     enemy.wobblePhase += enemy.wobbleSpeed * dt;
     const wobbleOffset = Math.sin(enemy.wobblePhase) * enemy.wobbleAmp;
 
-    if (enemy.targetX === null) enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
+    if (enemy.targetX === null) enemy.targetX = enemy.patrolLeft + Math.random() * Math.max(1, (enemy.patrolRight - enemy.patrolLeft));
     const dx = enemy.targetX - enemy.x;
-    // desiredVx increased: base 60, multiplier 60 (was 40 + 40*speedMultiplier)
     const desiredVx = Math.sign(dx) * (60 + 60 * speedMultiplier);
     const accel = 120;
     if (enemy.vx < desiredVx) enemy.vx = Math.min(desiredVx, enemy.vx + accel * dt);
@@ -424,8 +426,22 @@
 
     enemy.x += enemy.vx * dt;
 
+    // --- 重要: 敵が画面の左半分に入らないように常に制限 ---
+    const leftLimit = Math.floor(w * 0.5);
+    if (enemy.x < leftLimit) {
+      enemy.x = leftLimit;
+      // もし targetX が左側に設定されていたら、再設定して左半分に入らないようにする
+      if (enemy.targetX < leftLimit) {
+        enemy.targetX = leftLimit + Math.random() * Math.max(1, (enemy.patrolRight - leftLimit));
+      }
+      // vx は左向きなら反転させて少し押し戻す（自然に見せる）
+      if (enemy.vx < 0) enemy.vx = Math.abs(enemy.vx) * 0.4;
+    }
+
+    // 目標到達時やランダムで新しい targetX を選ぶが、必ず左半分より右に
     if (Math.abs(dx) < 10 || Math.random() < 0.002) {
-      enemy.targetX = enemy.patrolLeft + Math.random() * (enemy.patrolRight - enemy.patrolLeft);
+      const minTarget = Math.max(enemy.patrolLeft, leftLimit);
+      enemy.targetX = minTarget + Math.random() * Math.max(1, (enemy.patrolRight - minTarget));
     }
 
     if (now - enemy.lastManeuver > enemy.maneuverInterval) {
@@ -436,6 +452,7 @@
       enemy.vy += (Math.random()*2 - 1) * 40;
     }
 
+    // 回避は上下移動のみ（vx を大きく変えない）
     if (enemy.dodgeCooldown <= 0) {
       let nearest = null;
       let nearestDist = 99999;
@@ -447,7 +464,7 @@
       }
       if (nearest && nearestDist < 140) {
         const dir = (nearest.y > enemy.y + wobbleOffset) ? -1 : 1;
-        enemy.vy += dir * (40 + Math.random()*40);
+        enemy.vy += dir * (48 + Math.random()*36);
         enemy.dodgeCooldown = 0.35 + Math.random()*0.6;
       }
     } else {
